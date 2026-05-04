@@ -5,7 +5,7 @@ import SwiftUI
 
 enum MenuBarIcon {
     static var image: NSImage {
-        if let url = Bundle.module.url(forResource: "MenuBarIcon", withExtension: "svg"),
+        if let url = Bundle.main.url(forResource: "MenuBarIcon", withExtension: "svg"),
            let image = NSImage(contentsOf: url) {
             image.isTemplate = true
             image.size = NSSize(width: 18, height: 18)
