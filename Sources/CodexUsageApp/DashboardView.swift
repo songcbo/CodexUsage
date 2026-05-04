@@ -6,8 +6,8 @@ import SwiftUI
 struct DashboardView: View {
     @EnvironmentObject private var settings: AppSettings
     @EnvironmentObject private var model: UsageViewModel
-    @State private var isRefreshAnimating = false
-    @State private var refreshRotation = 0.0
+    @State private var refreshFeedback: RefreshFeedback = .idle
+    @State private var refreshGeneration = 0
 
     var body: some View {
         VStack(spacing: 16) {
@@ -41,43 +41,70 @@ struct DashboardView: View {
             Button {
                 playRefreshInteraction()
             } label: {
-                Image(systemName: "arrow.clockwise")
-                    .rotationEffect(.degrees(refreshRotation))
+                RefreshFeedbackIcon(state: refreshFeedback)
                     .frame(width: 18, height: 18)
             }
             .help(settings.localized("refresh.title"))
-            .buttonStyle(.bordered)
-            .disabled(model.isRefreshing || isRefreshAnimating)
+            .buttonStyle(HeaderIconButtonStyle())
 
             Button {
                 SettingsWindowPresenter.shared.show(settings: settings, model: model)
             } label: {
                 Image(systemName: "gearshape")
+                    .frame(width: 18, height: 18)
             }
             .help(settings.localized("settings.title"))
-            .buttonStyle(.bordered)
+            .buttonStyle(HeaderIconButtonStyle())
         }
     }
     private func playRefreshInteraction() {
-        guard !isRefreshAnimating else { return }
-        isRefreshAnimating = true
-        refreshRotation = 0
-        withAnimation(.linear(duration: 1.0)) {
-            refreshRotation = 360
+        guard refreshFeedback != .refreshing, !model.isRefreshing else { return }
+        refreshGeneration += 1
+        let generation = refreshGeneration
+        withAnimation(.easeOut(duration: 0.12)) {
+            refreshFeedback = .refreshing
         }
 
         Task {
-            let startedAt = Date()
             await model.refreshRecentDays(settings: settings)
-            let elapsed = Date().timeIntervalSince(startedAt)
-            if elapsed < 1.0 {
-                try? await Task.sleep(nanoseconds: UInt64((1.0 - elapsed) * 1_000_000_000))
-            }
             await MainActor.run {
-                isRefreshAnimating = false
-                refreshRotation = 0
+                guard generation == refreshGeneration else { return }
+                withAnimation(.spring(response: 0.24, dampingFraction: 0.82)) {
+                    refreshFeedback = .done
+                }
+            }
+            try? await Task.sleep(nanoseconds: 1_200_000_000)
+            await MainActor.run {
+                guard generation == refreshGeneration, refreshFeedback == .done else { return }
+                withAnimation(.spring(response: 0.22, dampingFraction: 0.86)) {
+                    refreshFeedback = .idle
+                }
             }
         }
     }
 
+    fileprivate enum RefreshFeedback {
+        case idle
+        case refreshing
+        case done
+    }
+
+}
+
+private struct RefreshFeedbackIcon: View {
+    var state: DashboardView.RefreshFeedback
+
+    var body: some View {
+        ZStack {
+            Image(systemName: "arrow.clockwise")
+                .opacity(state == .done ? 0 : (state == .refreshing ? 0.65 : 1))
+                .scaleEffect(state == .refreshing ? 0.92 : (state == .done ? 0.82 : 1))
+
+            Image(systemName: "checkmark")
+                .font(.system(size: 14, weight: .bold))
+                .foregroundStyle(Color.green)
+                .opacity(state == .done ? 1 : 0)
+                .scaleEffect(state == .done ? 1 : 0.82)
+        }
+    }
 }
