@@ -22,6 +22,7 @@
 		0A00000D2C00000000000000 /* Utilities.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0A00010D2C00000000000000 /* Utilities.swift */; };
 		0A00000E2C00000000000000 /* MenuBarIcon.svg in Resources */ = {isa = PBXBuildFile; fileRef = 0A00010E2C00000000000000 /* MenuBarIcon.svg */; };
 		0A00000F2C00000000000000 /* libsqlite3.tbd in Frameworks */ = {isa = PBXBuildFile; fileRef = 0A00010F2C00000000000000 /* libsqlite3.tbd */; };
+		0A0000102C00000000000000 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 0A0001122C00000000000000 /* Assets.xcassets */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -42,6 +43,7 @@
 		0A00010F2C00000000000000 /* libsqlite3.tbd */ = {isa = PBXFileReference; lastKnownFileType = "sourcecode.text-based-dylib-definition"; name = libsqlite3.tbd; path = usr/lib/libsqlite3.tbd; sourceTree = SDKROOT; };
 		0A0001102C00000000000000 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		0A0001112C00000000000000 /* CodexUsage.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = CodexUsage.app; sourceTree = BUILT_PRODUCTS_DIR; };
+		0A0001122C00000000000000 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -81,6 +83,7 @@
 				0A00010B2C00000000000000 /* UsageDatabase.swift */,
 				0A00010C2C00000000000000 /* UsageViewModel.swift */,
 				0A00010D2C00000000000000 /* Utilities.swift */,
+				0A0001122C00000000000000 /* Assets.xcassets */,
 				0A0003052C00000000000000 /* Resources */,
 				0A0001102C00000000000000 /* Info.plist */,
 			);
@@ -169,6 +172,7 @@
 			isa = PBXResourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				0A0000102C00000000000000 /* Assets.xcassets in Resources */,
 				0A00000E2C00000000000000 /* MenuBarIcon.svg in Resources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
