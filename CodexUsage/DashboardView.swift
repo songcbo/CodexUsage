@@ -55,6 +55,15 @@ struct DashboardView: View {
             }
             .help(settings.localized("settings.title"))
             .buttonStyle(HeaderIconButtonStyle())
+
+            Button(role: .destructive) {
+                NSApp.terminate(nil)
+            } label: {
+                Image(systemName: "power")
+                    .frame(width: 18, height: 18)
+            }
+            .help(settings.localized("settings.quit"))
+            .buttonStyle(HeaderIconButtonStyle())
         }
     }
     private func playRefreshInteraction() {

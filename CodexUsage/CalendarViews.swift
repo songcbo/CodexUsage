@@ -71,7 +71,7 @@ struct CalendarGrid: View {
                     .foregroundStyle(.secondary)
                     .frame(height: 18)
             }
-            ForEach(monthCells, id: \.self) { day in
+            ForEach(Array(monthCells.enumerated()), id: \.offset) { _, day in
                 if let day {
                     let usage = model.usage(for: day)
                     Button {

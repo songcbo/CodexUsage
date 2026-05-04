@@ -34,7 +34,6 @@ struct CodexUsageApp: App {
                 }
                 .onAppear {
                     model.resetVisibleMonthToCurrent()
-                    Task { await model.refreshToday(settings: settings) }
                 }
         } label: {
             Image(nsImage: MenuBarIcon.image)

@@ -81,14 +81,15 @@ enum L10n {
             "settings.scan7d": "7 days",
             "settings.scan30d": "30 days",
             "settings.scanAll": "All history",
-            "settings.refreshBehavior": "Opening the menu refreshes today automatically. The toolbar refresh button recalculates the last 7 days.",
+            "settings.refreshBehavior": "The app refreshes the startup range once on launch. The toolbar refresh button recalculates the last 7 days.",
             "settings.display": "Display",
             "settings.language": "Language",
             "settings.defaultRange": "Default range",
             "settings.showCost": "Show estimated cost",
             "settings.showReasoning": "Show reasoning tokens",
             "settings.privacy": "Privacy",
-            "settings.privacyDetail": "The app only parses token metadata from local Codex JSONL files. It does not display prompts or model responses."
+            "settings.privacyDetail": "The app only parses token metadata from local Codex JSONL files. It does not display prompts or model responses.",
+            "settings.quit": "Quit CodexUsage"
         ],
         "zh-Hans": [
             "app.title": "Codex 用量",
@@ -129,14 +130,15 @@ enum L10n {
             "settings.scan7d": "7 天",
             "settings.scan30d": "30 天",
             "settings.scanAll": "全部历史",
-            "settings.refreshBehavior": "打开菜单时会自动刷新今天；顶部刷新按钮会重算最近 7 天。",
+            "settings.refreshBehavior": "应用启动时会刷新一次启动扫描范围；顶部刷新按钮会重算最近 7 天。",
             "settings.display": "显示",
             "settings.language": "语言",
             "settings.defaultRange": "默认范围",
             "settings.showCost": "显示预估费用",
             "settings.showReasoning": "显示推理 token",
             "settings.privacy": "隐私",
-            "settings.privacyDetail": "应用只解析本地 Codex JSONL 文件中的 token 元数据，不展示提示词或模型回复内容。"
+            "settings.privacyDetail": "应用只解析本地 Codex JSONL 文件中的 token 元数据，不展示提示词或模型回复内容。",
+            "settings.quit": "退出 CodexUsage"
         ]
     ]
 }
