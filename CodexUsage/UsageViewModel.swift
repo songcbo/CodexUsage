@@ -39,6 +39,11 @@ final class UsageViewModel: ObservableObject {
         await refresh(daysBack: 1, settings: settings)
     }
 
+    func refreshOnMenuOpen(settings: AppSettings) async {
+        guard !isRefreshing else { return }
+        await refreshToday(settings: settings)
+    }
+
     func refreshRecentDays(settings: AppSettings) async {
         await refresh(daysBack: 7, settings: settings)
     }
