@@ -8,10 +8,12 @@ struct CodexUsageScanner {
     var includeArchivedSessions: Bool
 
     func scan(daysBack: Int?) throws -> [DailyUsage] {
-        let targetDays = try daysToScan(daysBack: daysBack)
-        return try targetDays.map { day in
-            let files = try files(for: day)
-            let result = try scan(files: files)
+        let targetDays = daysBack.map { Set(daysToScan(daysBack: $0)) }
+        let files = try files(daysBack: daysBack)
+        let results = try scan(files: files, targetDays: targetDays)
+        let days = targetDays?.sorted() ?? results.keys.sorted()
+        return days.map { day in
+            let result = results[day] ?? ScanResult()
             return DailyUsage(
                 day: day,
                 totals: result.totals.withEstimatedCost(),
@@ -21,58 +23,25 @@ struct CodexUsageScanner {
         }
     }
 
-    private func daysToScan(daysBack: Int?) throws -> [String] {
+    private func daysToScan(daysBack: Int) -> [String] {
+        let calendar = Calendar.current
+        let today = calendar.startOfDay(for: Date())
+        return (0..<max(1, daysBack)).compactMap { offset in
+            calendar.date(byAdding: .day, value: -offset, to: today)
+        }
+        .map(Self.dayString)
+        .sorted()
+    }
+
+    private func files(daysBack: Int?) throws -> [URL] {
+        var result = try jsonlFilesRecursively(in: codexPath.appendingPathComponent("sessions", isDirectory: true))
         if let daysBack {
             let calendar = Calendar.current
             let today = calendar.startOfDay(for: Date())
-            return (0..<max(1, daysBack)).compactMap { offset in
-                calendar.date(byAdding: .day, value: -offset, to: today)
-            }
-            .map(Self.dayString)
-            .sorted()
-        }
-
-        var days = Set<String>()
-        let sessions = codexPath.appendingPathComponent("sessions", isDirectory: true)
-        if let enumerator = FileManager.default.enumerator(at: sessions, includingPropertiesForKeys: nil) {
-            for case let url as URL in enumerator where url.pathExtension == "jsonl" {
-                if let day = dayFromSessionPath(url) {
-                    days.insert(day)
-                }
-            }
-        }
-
-        if includeArchivedSessions {
-            let archived = codexPath.appendingPathComponent("archived_sessions", isDirectory: true)
-            if let enumerator = FileManager.default.enumerator(at: archived, includingPropertiesForKeys: nil) {
-                for case let url as URL in enumerator where url.pathExtension == "jsonl" {
-                    if let day = dayFromFilename(url) {
-                        days.insert(day)
-                    }
-                }
-            }
-        }
-
-        return days.sorted()
-    }
-
-    private func files(for day: String) throws -> [URL] {
-        let components = day.split(separator: "-").map(String.init)
-        var result: [URL] = []
-        if components.count == 3 {
-            let dayDirectory = codexPath
-                .appendingPathComponent("sessions", isDirectory: true)
-                .appendingPathComponent(components[0], isDirectory: true)
-                .appendingPathComponent(components[1], isDirectory: true)
-                .appendingPathComponent(components[2], isDirectory: true)
-            result.append(contentsOf: try jsonlFiles(in: dayDirectory))
-        }
-
-        if includeArchivedSessions {
-            let archived = codexPath.appendingPathComponent("archived_sessions", isDirectory: true)
-            result.append(contentsOf: try jsonlFiles(in: archived).filter { url in
-                dayFromFilename(url) == day
-            })
+            let earliest = calendar.date(byAdding: .day, value: -max(1, daysBack) + 1, to: today) ?? today
+            result = try result.filter { try modificationDate(of: $0) >= earliest }
+        } else if includeArchivedSessions {
+            result.append(contentsOf: try jsonlFiles(in: codexPath.appendingPathComponent("archived_sessions", isDirectory: true)))
         }
         return result
     }
@@ -87,17 +56,47 @@ struct CodexUsageScanner {
         return urls.filter { $0.pathExtension == "jsonl" }
     }
 
-    private func scan(files: [URL]) throws -> ScanResult {
-        var result = ScanResult()
+    private func jsonlFilesRecursively(in directory: URL) throws -> [URL] {
+        guard FileManager.default.fileExists(atPath: directory.path) else { return [] }
+        guard let enumerator = FileManager.default.enumerator(at: directory, includingPropertiesForKeys: nil) else {
+            return []
+        }
+        var urls: [URL] = []
+        for case let url as URL in enumerator where url.pathExtension == "jsonl" {
+            urls.append(url)
+        }
+        return urls
+    }
+
+    private func modificationDate(of url: URL) throws -> Date {
+        let values = try url.resourceValues(forKeys: [.contentModificationDateKey])
+        return values.contentModificationDate ?? .distantPast
+    }
+
+    private func scan(files: [URL], targetDays: Set<String>?) throws -> [String: ScanResult] {
+        var results: [String: ScanResult] = [:]
+        let timestampFormatter = ISO8601DateFormatter()
+        timestampFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        let fallbackTimestampFormatter = ISO8601DateFormatter()
+        fallbackTimestampFormatter.formatOptions = [.withInternetDateTime]
         for file in files {
             let content = try String(contentsOf: file, encoding: .utf8)
             for line in content.split(separator: "\n", omittingEmptySubsequences: true) {
                 guard let data = line.data(using: .utf8),
                       let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
                       let timestamp = object["timestamp"] as? String,
+                      let day = dayFromTimestamp(
+                        timestamp,
+                        formatter: timestampFormatter,
+                        fallbackFormatter: fallbackTimestampFormatter
+                      ),
                       let payload = object["payload"] as? [String: Any] else {
                     continue
                 }
+                if let targetDays, !targetDays.contains(day) {
+                    continue
+                }
+                var result = results[day] ?? ScanResult()
                 if payload["type"] as? String == "token_count",
                    let info = payload["info"] as? [String: Any],
                    let last = info["last_token_usage"] as? [String: Any] {
@@ -113,9 +112,10 @@ struct CodexUsageScanner {
                    result.latestRateLimit?.timestamp ?? "" < snapshot.timestamp {
                     result.latestRateLimit = snapshot
                 }
+                results[day] = result
             }
         }
-        return result
+        return results
     }
 
     private func snapshot(from json: [String: Any], timestamp: String) -> RateLimitSnapshot? {
@@ -150,22 +150,15 @@ struct CodexUsageScanner {
         return 0
     }
 
-    private func dayFromSessionPath(_ url: URL) -> String? {
-        let parts = url.pathComponents
-        guard parts.count >= 4 else { return nil }
-        let day = parts[parts.count - 2]
-        let month = parts[parts.count - 3]
-        let year = parts[parts.count - 4]
-        guard year.count == 4, month.count == 2, day.count == 2 else { return nil }
-        return "\(year)-\(month)-\(day)"
-    }
-
-    private func dayFromFilename(_ url: URL) -> String? {
-        let name = url.lastPathComponent
-        guard let range = name.range(of: #"\d{4}-\d{2}-\d{2}"#, options: .regularExpression) else {
+    private func dayFromTimestamp(
+        _ timestamp: String,
+        formatter: ISO8601DateFormatter,
+        fallbackFormatter: ISO8601DateFormatter
+    ) -> String? {
+        guard let date = formatter.date(from: timestamp) ?? fallbackFormatter.date(from: timestamp) else {
             return nil
         }
-        return String(name[range])
+        return Self.dayString(from: date)
     }
 
     private static func dayString(from date: Date) -> String {
