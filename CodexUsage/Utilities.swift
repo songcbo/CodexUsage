@@ -18,6 +18,22 @@ enum Formatters {
         return value.formatted()
     }
 
+    static func compactUSD(_ value: Double) -> String {
+        if value >= 1_000 {
+            return String(format: "$%.1fk", value / 1_000)
+        }
+        if value >= 10 {
+            return String(format: "$%.1f", value)
+        }
+        if value >= 0.01 {
+            return String(format: "$%.2f", value)
+        }
+        if value > 0 {
+            return "<$0.01"
+        }
+        return "$0.00"
+    }
+
     static let dayFormatter: DateFormatter = {
         let formatter = DateFormatter()
         formatter.calendar = Calendar(identifier: .gregorian)
@@ -66,6 +82,10 @@ enum L10n {
             "usage.used": "used",
             "usage.remaining": "remaining",
             "calendar.totalTokens": "Total tokens",
+            "calendar.totalCost": "Cost",
+            "calendar.mode.tokens": "Token",
+            "calendar.mode.cost": "Cost",
+            "calendar.mode.all": "All",
             "range.today": "Today",
             "range.sevenDays": "7d",
             "range.thirtyDays": "30d",
@@ -115,6 +135,10 @@ enum L10n {
             "usage.used": "已用",
             "usage.remaining": "剩余",
             "calendar.totalTokens": "总 Token",
+            "calendar.totalCost": "费用",
+            "calendar.mode.tokens": "Token",
+            "calendar.mode.cost": "费用",
+            "calendar.mode.all": "全部",
             "range.today": "今天",
             "range.sevenDays": "7 天",
             "range.thirtyDays": "30 天",
