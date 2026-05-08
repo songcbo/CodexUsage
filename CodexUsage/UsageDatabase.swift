@@ -174,8 +174,34 @@ final class UsageDatabase {
         return usagesByDay.values.sorted { $0.day < $1.day }
     }
 
+    func fetchScanStates(source: UsageSource) throws -> [String: UsageSessionScanState] {
+        let sql = """
+        SELECT session_key, file_size, file_mtime, last_scanned_offset
+        FROM usage_sessions
+        WHERE last_seen_source = ? AND session_key NOT LIKE '__legacy__:%';
+        """
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else {
+            throw UsageError.database(lastError)
+        }
+        defer { sqlite3_finalize(statement) }
+        sqlite3_bind_text(statement, 1, source.rawValue, -1, sqliteTransientDestructor())
+
+        var states: [String: UsageSessionScanState] = [:]
+        while sqlite3_step(statement) == SQLITE_ROW {
+            let sessionKey = String(cString: sqlite3_column_text(statement, 0))
+            states[sessionKey] = UsageSessionScanState(
+                fileSize: sqlite3_column_int64(statement, 1),
+                fileMtime: sqlite3_column_int64(statement, 2),
+                lastScannedOffset: sqlite3_column_int64(statement, 3)
+            )
+        }
+        return states
+    }
+
     func reconcile(sessions: [UsageSessionScan], status: UsageSessionStatus, scannedDays: Set<String>?) throws {
         let now = Int64(Date().timeIntervalSince1970)
+        var residualDays = Set<String>()
         try execute("BEGIN IMMEDIATE TRANSACTION;")
         do {
             if scannedDays == nil {
@@ -183,9 +209,24 @@ final class UsageDatabase {
             }
             for session in sessions {
                 try upsert(session: session, now: now)
-                try replaceSessionDays(sessionKey: session.sessionKey, usages: session.usages, scannedDays: scannedDays)
+                switch session.scanMode {
+                case .full, .fullReset:
+                    if scannedDays != nil {
+                        residualDays.formUnion(try fetchSessionDays(sessionKey: session.sessionKey))
+                        residualDays.formUnion(session.usages.map(\.day))
+                    }
+                    try replaceSessionDays(sessionKey: session.sessionKey, usages: session.usages, scannedDays: nil)
+                case .incremental:
+                    try mergeSessionDays(sessionKey: session.sessionKey, usages: session.usages)
+                case .unchanged:
+                    break
+                }
             }
-            try rebuildLegacyResiduals(scannedDays: scannedDays, now: now)
+            if scannedDays == nil {
+                try rebuildLegacyResiduals(scannedDays: nil, now: now)
+            } else if !residualDays.isEmpty {
+                try rebuildLegacyResiduals(scannedDays: residualDays, now: now)
+            }
             try execute("COMMIT;")
         } catch {
             try? execute("ROLLBACK;")
@@ -235,12 +276,16 @@ final class UsageDatabase {
             last_seen_path TEXT NOT NULL,
             file_size INTEGER NOT NULL,
             file_mtime INTEGER NOT NULL,
+            last_scanned_offset INTEGER NOT NULL,
             first_scanned_at INTEGER NOT NULL,
             last_scanned_at INTEGER NOT NULL
         );
         """)
         if try !columnExists("last_seen_source", in: "usage_sessions") {
             try execute("ALTER TABLE usage_sessions ADD COLUMN last_seen_source TEXT NOT NULL DEFAULT 'active';")
+        }
+        if try !columnExists("last_scanned_offset", in: "usage_sessions") {
+            try execute("ALTER TABLE usage_sessions ADD COLUMN last_scanned_offset INTEGER NOT NULL DEFAULT 0;")
         }
         try execute("""
         CREATE TABLE IF NOT EXISTS usage_session_days (
@@ -332,14 +377,15 @@ final class UsageDatabase {
         let sql = """
         INSERT INTO usage_sessions (
             session_key, status, last_seen_source, last_seen_path,
-            file_size, file_mtime, first_scanned_at, last_scanned_at
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            file_size, file_mtime, last_scanned_offset, first_scanned_at, last_scanned_at
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         ON CONFLICT(session_key) DO UPDATE SET
             status = excluded.status,
             last_seen_source = excluded.last_seen_source,
             last_seen_path = excluded.last_seen_path,
             file_size = excluded.file_size,
             file_mtime = excluded.file_mtime,
+            last_scanned_offset = excluded.last_scanned_offset,
             last_scanned_at = excluded.last_scanned_at;
         """
         var statement: OpaquePointer?
@@ -353,8 +399,9 @@ final class UsageDatabase {
         sqlite3_bind_text(statement, 4, session.path, -1, sqliteTransientDestructor())
         sqlite3_bind_int64(statement, 5, session.fileSize)
         sqlite3_bind_int64(statement, 6, session.fileMtime)
-        sqlite3_bind_int64(statement, 7, now)
+        sqlite3_bind_int64(statement, 7, session.lastScannedOffset)
         sqlite3_bind_int64(statement, 8, now)
+        sqlite3_bind_int64(statement, 9, now)
         guard sqlite3_step(statement) == SQLITE_DONE else {
             throw UsageError.database(lastError)
         }
@@ -371,6 +418,86 @@ final class UsageDatabase {
         for usage in usages where usage.totals.totalTokens > 0 || usage.totals.runs > 0 {
             try insertSessionDay(sessionKey: sessionKey, usage: usage)
         }
+    }
+
+    private func mergeSessionDays(sessionKey: String, usages: [DailyUsage]) throws {
+        for usage in usages where usage.totals.totalTokens > 0 || usage.totals.runs > 0 {
+            try mergeSessionDay(sessionKey: sessionKey, usage: usage)
+        }
+    }
+
+    private func mergeSessionDay(sessionKey: String, usage: DailyUsage) throws {
+        var merged = try fetchSessionDay(sessionKey: sessionKey, day: usage.day) ?? DailyUsage(
+            day: usage.day,
+            totals: UsageTotals(),
+            latestRateLimit: nil,
+            updatedAt: usage.updatedAt
+        )
+        merged.totals.add(usage.totals)
+        if let snapshot = usage.latestRateLimit,
+           merged.latestRateLimit?.timestamp ?? "" < snapshot.timestamp {
+            merged.latestRateLimit = snapshot
+        }
+        merged.updatedAt = max(merged.updatedAt, usage.updatedAt)
+        try insertSessionDay(sessionKey: sessionKey, usage: merged)
+    }
+
+    private func fetchSessionDay(sessionKey: String, day: String) throws -> DailyUsage? {
+        let sql = """
+        SELECT day, input_tokens, cached_input_tokens, output_tokens, reasoning_output_tokens,
+               total_tokens, runs, estimated_cost_usd, latest_rate_limits_json, updated_at
+        FROM usage_session_days
+        WHERE session_key = ? AND day = ?
+        LIMIT 1;
+        """
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else {
+            throw UsageError.database(lastError)
+        }
+        defer { sqlite3_finalize(statement) }
+        sqlite3_bind_text(statement, 1, sessionKey, -1, sqliteTransientDestructor())
+        sqlite3_bind_text(statement, 2, day, -1, sqliteTransientDestructor())
+        guard sqlite3_step(statement) == SQLITE_ROW else {
+            return nil
+        }
+        let totals = UsageTotals(
+            inputTokens: sqlite3_column_int64(statement, 1),
+            cachedInputTokens: sqlite3_column_int64(statement, 2),
+            outputTokens: sqlite3_column_int64(statement, 3),
+            reasoningOutputTokens: sqlite3_column_int64(statement, 4),
+            totalTokens: sqlite3_column_int64(statement, 5),
+            runs: sqlite3_column_int64(statement, 6),
+            estimatedCostUSD: sqlite3_column_double(statement, 7)
+        )
+        let snapshot: RateLimitSnapshot?
+        if let raw = sqlite3_column_text(statement, 8) {
+            let json = String(cString: raw)
+            snapshot = try? decoder.decode(RateLimitSnapshot.self, from: Data(json.utf8))
+        } else {
+            snapshot = nil
+        }
+        return DailyUsage(
+            day: String(cString: sqlite3_column_text(statement, 0)),
+            totals: totals,
+            latestRateLimit: snapshot,
+            updatedAt: sqlite3_column_int64(statement, 9)
+        )
+    }
+
+    private func fetchSessionDays(sessionKey: String) throws -> Set<String> {
+        let sql = "SELECT day FROM usage_session_days WHERE session_key = ?;"
+        var statement: OpaquePointer?
+        guard sqlite3_prepare_v2(db, sql, -1, &statement, nil) == SQLITE_OK else {
+            throw UsageError.database(lastError)
+        }
+        defer { sqlite3_finalize(statement) }
+        sqlite3_bind_text(statement, 1, sessionKey, -1, sqliteTransientDestructor())
+
+        var days = Set<String>()
+        while sqlite3_step(statement) == SQLITE_ROW {
+            days.insert(String(cString: sqlite3_column_text(statement, 0)))
+        }
+        return days
     }
 
     private func deleteSessionDays(sessionKey: String) throws {
@@ -497,9 +624,11 @@ final class UsageDatabase {
             sessionKey: sessionKey,
             source: source,
             status: .missing,
+            scanMode: .unchanged,
             path: "legacy:\(day)",
             fileSize: 0,
             fileMtime: 0,
+            lastScannedOffset: 0,
             usages: []
         )
         try upsert(session: session, now: now)

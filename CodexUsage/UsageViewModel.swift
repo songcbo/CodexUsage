@@ -110,7 +110,8 @@ final class UsageViewModel: ObservableObject {
         try await Task.detached(priority: .userInitiated) {
             let scanner = CodexUsageScanner(codexPath: URL(fileURLWithPath: codexPath))
             let database = try UsageDatabase()
-            let sessions = try scanner.scanSessions(source: .active, daysBack: daysBack)
+            let states = try database.fetchScanStates(source: .active)
+            let sessions = try scanner.scanSessions(source: .active, daysBack: daysBack, scanStates: states)
             try database.reconcile(sessions: sessions, status: .active, scannedDays: scannedDays)
         }.value
     }

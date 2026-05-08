@@ -23,19 +23,43 @@ struct CodexUsageScanner {
         return dailyUsages(from: totalsByDay, targetDays: daysBack.map { Set(daysToScan(daysBack: $0)) })
     }
 
-    func scanSessions(source: UsageSource, daysBack: Int?) throws -> [UsageSessionScan] {
-        let targetDays = daysBack.map { Set(daysToScan(daysBack: $0)) }
+    func scanSessions(
+        source: UsageSource,
+        daysBack: Int?,
+        scanStates: [String: UsageSessionScanState] = [:]
+    ) throws -> [UsageSessionScan] {
         let files = try files(source: source, daysBack: daysBack)
         let status: UsageSessionStatus = source == .active ? .active : .archived
         return try files.map { file in
-            UsageSessionScan(
-                sessionKey: sessionKey(for: file),
+            let sessionKey = sessionKey(for: file)
+            let fileSize = try fileSize(of: file)
+            let fileMtime = try modificationTimeMilliseconds(of: file)
+            let plan = scanPlan(fileSize: fileSize, fileMtime: fileMtime, state: scanStates[sessionKey])
+            if plan.mode == .unchanged {
+                return UsageSessionScan(
+                    sessionKey: sessionKey,
+                    source: source,
+                    status: status,
+                    scanMode: .unchanged,
+                    path: file.path,
+                    fileSize: fileSize,
+                    fileMtime: fileMtime,
+                    lastScannedOffset: plan.startOffset,
+                    usages: []
+                )
+            }
+            // Persisted offsets are only safe after every reachable row has been considered.
+            let scan = try scan(file: file, targetDays: nil, startOffset: plan.startOffset)
+            return UsageSessionScan(
+                sessionKey: sessionKey,
                 source: source,
                 status: status,
+                scanMode: plan.mode,
                 path: file.path,
-                fileSize: try fileSize(of: file),
-                fileMtime: Int64(try modificationDate(of: file).timeIntervalSince1970),
-                usages: dailyUsages(from: try scan(file: file, targetDays: targetDays), targetDays: targetDays)
+                fileSize: fileSize,
+                fileMtime: fileMtime,
+                lastScannedOffset: scan.scannedOffset,
+                usages: dailyUsages(from: scan.results, targetDays: nil)
             )
         }
     }
@@ -86,6 +110,10 @@ struct CodexUsageScanner {
         return values.contentModificationDate ?? .distantPast
     }
 
+    private func modificationTimeMilliseconds(of url: URL) throws -> Int64 {
+        Int64((try modificationDate(of: url).timeIntervalSince1970 * 1_000).rounded(.down))
+    }
+
     private func fileSize(of url: URL) throws -> Int64 {
         let values = try url.resourceValues(forKeys: [.fileSizeKey])
         return Int64(values.fileSize ?? 0)
@@ -116,45 +144,52 @@ struct CodexUsageScanner {
         let fallbackTimestampFormatter = ISO8601DateFormatter()
         fallbackTimestampFormatter.formatOptions = [.withInternetDateTime]
         for file in files {
-            try scan(
-                file: file,
-                targetDays: targetDays,
-                results: &results,
-                timestampFormatter: timestampFormatter,
-                fallbackTimestampFormatter: fallbackTimestampFormatter
-            )
+            let scan = try scan(file: file, targetDays: targetDays)
+            for (day, fileResult) in scan.results {
+                var result = results[day] ?? ScanResult()
+                result.totals.add(fileResult.totals)
+                if let snapshot = fileResult.latestRateLimit,
+                   result.latestRateLimit?.timestamp ?? "" < snapshot.timestamp {
+                    result.latestRateLimit = snapshot
+                }
+                results[day] = result
+            }
         }
         return results
     }
 
-    private func scan(file: URL, targetDays: Set<String>?) throws -> [String: ScanResult] {
+    private func scan(file: URL, targetDays: Set<String>?, startOffset: Int64 = 0) throws -> FileScan {
         var results: [String: ScanResult] = [:]
         let timestampFormatter = ISO8601DateFormatter()
         timestampFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
         let fallbackTimestampFormatter = ISO8601DateFormatter()
         fallbackTimestampFormatter.formatOptions = [.withInternetDateTime]
-        try scan(
+        let scannedOffset = try scan(
             file: file,
             targetDays: targetDays,
+            startOffset: startOffset,
             results: &results,
             timestampFormatter: timestampFormatter,
             fallbackTimestampFormatter: fallbackTimestampFormatter
         )
-        return results
+        return FileScan(results: results, scannedOffset: scannedOffset)
     }
 
     private func scan(
         file: URL,
         targetDays: Set<String>?,
+        startOffset: Int64,
         results: inout [String: ScanResult],
         timestampFormatter: ISO8601DateFormatter,
         fallbackTimestampFormatter: ISO8601DateFormatter
-    ) throws {
+    ) throws -> Int64 {
         let handle = try FileHandle(forReadingFrom: file)
         defer { try? handle.close() }
+        try handle.seek(toOffset: UInt64(max(0, startOffset)))
 
         let newline = Data([0x0A])
         var buffer = Data()
+        var scannedOffset = max(0, startOffset)
         while true {
             guard let chunk = try handle.read(upToCount: 64 * 1024), !chunk.isEmpty else {
                 break
@@ -169,10 +204,11 @@ struct CodexUsageScanner {
                     timestampFormatter: timestampFormatter,
                     fallbackTimestampFormatter: fallbackTimestampFormatter
                 )
+                scannedOffset += Int64(range.upperBound)
                 buffer.removeSubrange(..<range.upperBound)
             }
         }
-        if !buffer.isEmpty {
+        if !buffer.isEmpty, isCompleteJSONLine(buffer) {
             process(
                 line: buffer,
                 targetDays: targetDays,
@@ -180,7 +216,42 @@ struct CodexUsageScanner {
                 timestampFormatter: timestampFormatter,
                 fallbackTimestampFormatter: fallbackTimestampFormatter
             )
+            scannedOffset += Int64(buffer.count)
         }
+        return scannedOffset
+    }
+
+    private func scanPlan(
+        fileSize: Int64,
+        fileMtime: Int64,
+        state: UsageSessionScanState?
+    ) -> (mode: UsageSessionScanMode, startOffset: Int64) {
+        guard let state else {
+            return (.full, 0)
+        }
+        let offset = max(0, state.lastScannedOffset)
+        if fileSize == state.fileSize, isSameStoredMtime(fileMtime, state.fileMtime), offset == fileSize {
+            return (.unchanged, offset)
+        }
+        if offset > 0,
+           fileSize >= offset,
+           isNotOlderStoredMtime(fileMtime, state.fileMtime),
+           (fileSize > state.fileSize || offset < fileSize) {
+            return (.incremental, offset)
+        }
+        return state.lastScannedOffset > 0 ? (.fullReset, 0) : (.full, 0)
+    }
+
+    private func isSameStoredMtime(_ fileMtime: Int64, _ storedMtime: Int64) -> Bool {
+        fileMtime == storedMtime || isSecondPrecisionMatch(fileMtime, storedMtime)
+    }
+
+    private func isNotOlderStoredMtime(_ fileMtime: Int64, _ storedMtime: Int64) -> Bool {
+        fileMtime >= storedMtime || fileMtime / 1_000 >= storedMtime
+    }
+
+    private func isSecondPrecisionMatch(_ fileMtime: Int64, _ storedMtime: Int64) -> Bool {
+        storedMtime < 10_000_000_000 && fileMtime / 1_000 == storedMtime
     }
 
     private func process(
@@ -220,6 +291,10 @@ struct CodexUsageScanner {
             result.latestRateLimit = snapshot
         }
         results[day] = result
+    }
+
+    private func isCompleteJSONLine(_ data: Data) -> Bool {
+        (try? JSONSerialization.jsonObject(with: data)) != nil
     }
 
     private func snapshot(from json: [String: Any], timestamp: String) -> RateLimitSnapshot? {
@@ -281,6 +356,11 @@ struct CodexUsageScanner {
 private struct ScanResult {
     var totals = UsageTotals()
     var latestRateLimit: RateLimitSnapshot?
+}
+
+private struct FileScan {
+    var results: [String: ScanResult]
+    var scannedOffset: Int64
 }
 
 private extension UsageTotals {

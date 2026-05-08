@@ -23,6 +23,19 @@ enum UsageSessionStatus: String {
     case missing
 }
 
+enum UsageSessionScanMode {
+    case full
+    case fullReset
+    case incremental
+    case unchanged
+}
+
+struct UsageSessionScanState {
+    var fileSize: Int64
+    var fileMtime: Int64
+    var lastScannedOffset: Int64
+}
+
 struct UsageTotals: Codable, Equatable {
     var inputTokens: Int64 = 0
     var cachedInputTokens: Int64 = 0
@@ -71,8 +84,10 @@ struct UsageSessionScan {
     var sessionKey: String
     var source: UsageSource
     var status: UsageSessionStatus
+    var scanMode: UsageSessionScanMode
     var path: String
     var fileSize: Int64
     var fileMtime: Int64
+    var lastScannedOffset: Int64
     var usages: [DailyUsage]
 }
