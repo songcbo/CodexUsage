@@ -56,16 +56,10 @@ final class UsageViewModel: ObservableObject {
         guard !isRefreshing else { return }
         isRefreshing = true
         lastRefreshError = nil
+        let codexPath = settings.codexPath
+        let includeArchived = settings.includeArchivedSessions
         do {
-            let scanner = CodexUsageScanner(codexPath: URL(fileURLWithPath: settings.codexPath))
-            let activeUsages = try scanner.scan(source: .active, daysBack: nil)
-            let archivedUsages = settings.includeArchivedSessions
-                ? try scanner.scan(source: .archived, daysBack: nil)
-                : []
-            try database.replace(usages: activeUsages, source: .active)
-            if settings.includeArchivedSessions {
-                try database.replace(usages: archivedUsages, source: .archived)
-            }
+            try await Self.rebuildAllInBackground(codexPath: codexPath, includeArchived: includeArchived)
             try reloadFromDatabase(settings: settings)
         } catch {
             lastRefreshError = error.localizedDescription
@@ -84,15 +78,36 @@ final class UsageViewModel: ObservableObject {
     private func refreshActive(daysBack: Int?, settings: AppSettings) async {
         isRefreshing = true
         lastRefreshError = nil
+        let codexPath = settings.codexPath
         do {
-            let scanner = CodexUsageScanner(codexPath: URL(fileURLWithPath: settings.codexPath))
-            let usages = try scanner.scan(source: .active, daysBack: daysBack)
-            try database.upsert(usages: usages, source: .active)
+            try await Self.refreshActiveInBackground(codexPath: codexPath, daysBack: daysBack)
             try reloadFromDatabase(settings: settings)
         } catch {
             lastRefreshError = error.localizedDescription
         }
         isRefreshing = false
+    }
+
+    private nonisolated static func rebuildAllInBackground(codexPath: String, includeArchived: Bool) async throws {
+        try await Task.detached(priority: .userInitiated) {
+            let scanner = CodexUsageScanner(codexPath: URL(fileURLWithPath: codexPath))
+            let database = try UsageDatabase()
+            let activeUsages = try scanner.scan(source: .active, daysBack: nil)
+            try database.replace(usages: activeUsages, source: .active)
+            if includeArchived {
+                let archivedUsages = try scanner.scan(source: .archived, daysBack: nil)
+                try database.replace(usages: archivedUsages, source: .archived)
+            }
+        }.value
+    }
+
+    private nonisolated static func refreshActiveInBackground(codexPath: String, daysBack: Int?) async throws {
+        try await Task.detached(priority: .userInitiated) {
+            let scanner = CodexUsageScanner(codexPath: URL(fileURLWithPath: codexPath))
+            let database = try UsageDatabase()
+            let usages = try scanner.scan(source: .active, daysBack: daysBack)
+            try database.upsert(usages: usages, source: .active)
+        }.value
     }
 
     private func reloadFromDatabase(settings: AppSettings) throws {

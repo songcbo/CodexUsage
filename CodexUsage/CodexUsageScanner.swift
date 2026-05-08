@@ -75,42 +75,94 @@ struct CodexUsageScanner {
         let fallbackTimestampFormatter = ISO8601DateFormatter()
         fallbackTimestampFormatter.formatOptions = [.withInternetDateTime]
         for file in files {
-            let content = try String(contentsOf: file, encoding: .utf8)
-            for line in content.split(separator: "\n", omittingEmptySubsequences: true) {
-                guard let data = line.data(using: .utf8),
-                      let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
-                      let timestamp = object["timestamp"] as? String,
-                      let day = dayFromTimestamp(
-                        timestamp,
-                        formatter: timestampFormatter,
-                        fallbackFormatter: fallbackTimestampFormatter
-                      ),
-                      let payload = object["payload"] as? [String: Any] else {
-                    continue
-                }
-                if let targetDays, !targetDays.contains(day) {
-                    continue
-                }
-                var result = results[day] ?? ScanResult()
-                if payload["type"] as? String == "token_count",
-                   let info = payload["info"] as? [String: Any],
-                   let last = info["last_token_usage"] as? [String: Any] {
-                    result.totals.inputTokens += int64(last["input_tokens"])
-                    result.totals.cachedInputTokens += int64(last["cached_input_tokens"])
-                    result.totals.outputTokens += int64(last["output_tokens"])
-                    result.totals.reasoningOutputTokens += int64(last["reasoning_output_tokens"])
-                    result.totals.totalTokens += int64(last["total_tokens"])
-                    result.totals.runs += 1
-                }
-                if let rateLimits = payload["rate_limits"] as? [String: Any],
-                   let snapshot = snapshot(from: rateLimits, timestamp: timestamp),
-                   result.latestRateLimit?.timestamp ?? "" < snapshot.timestamp {
-                    result.latestRateLimit = snapshot
-                }
-                results[day] = result
-            }
+            try scan(
+                file: file,
+                targetDays: targetDays,
+                results: &results,
+                timestampFormatter: timestampFormatter,
+                fallbackTimestampFormatter: fallbackTimestampFormatter
+            )
         }
         return results
+    }
+
+    private func scan(
+        file: URL,
+        targetDays: Set<String>?,
+        results: inout [String: ScanResult],
+        timestampFormatter: ISO8601DateFormatter,
+        fallbackTimestampFormatter: ISO8601DateFormatter
+    ) throws {
+        let handle = try FileHandle(forReadingFrom: file)
+        defer { try? handle.close() }
+
+        let newline = Data([0x0A])
+        var buffer = Data()
+        while true {
+            guard let chunk = try handle.read(upToCount: 64 * 1024), !chunk.isEmpty else {
+                break
+            }
+            buffer.append(chunk)
+            while let range = buffer.firstRange(of: newline) {
+                let line = buffer[..<range.lowerBound]
+                process(
+                    line: Data(line),
+                    targetDays: targetDays,
+                    results: &results,
+                    timestampFormatter: timestampFormatter,
+                    fallbackTimestampFormatter: fallbackTimestampFormatter
+                )
+                buffer.removeSubrange(..<range.upperBound)
+            }
+        }
+        if !buffer.isEmpty {
+            process(
+                line: buffer,
+                targetDays: targetDays,
+                results: &results,
+                timestampFormatter: timestampFormatter,
+                fallbackTimestampFormatter: fallbackTimestampFormatter
+            )
+        }
+    }
+
+    private func process(
+        line data: Data,
+        targetDays: Set<String>?,
+        results: inout [String: ScanResult],
+        timestampFormatter: ISO8601DateFormatter,
+        fallbackTimestampFormatter: ISO8601DateFormatter
+    ) {
+        guard let object = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let timestamp = object["timestamp"] as? String,
+              let day = dayFromTimestamp(
+                timestamp,
+                formatter: timestampFormatter,
+                fallbackFormatter: fallbackTimestampFormatter
+              ),
+              let payload = object["payload"] as? [String: Any] else {
+            return
+        }
+        if let targetDays, !targetDays.contains(day) {
+            return
+        }
+        var result = results[day] ?? ScanResult()
+        if payload["type"] as? String == "token_count",
+           let info = payload["info"] as? [String: Any],
+           let last = info["last_token_usage"] as? [String: Any] {
+            result.totals.inputTokens += int64(last["input_tokens"])
+            result.totals.cachedInputTokens += int64(last["cached_input_tokens"])
+            result.totals.outputTokens += int64(last["output_tokens"])
+            result.totals.reasoningOutputTokens += int64(last["reasoning_output_tokens"])
+            result.totals.totalTokens += int64(last["total_tokens"])
+            result.totals.runs += 1
+        }
+        if let rateLimits = payload["rate_limits"] as? [String: Any],
+           let snapshot = snapshot(from: rateLimits, timestamp: timestamp),
+           result.latestRateLimit?.timestamp ?? "" < snapshot.timestamp {
+            result.latestRateLimit = snapshot
+        }
+        results[day] = result
     }
 
     private func snapshot(from json: [String: Any], timestamp: String) -> RateLimitSnapshot? {
