@@ -17,6 +17,12 @@ enum UsageSource: String {
     case archived
 }
 
+enum UsageSessionStatus: String {
+    case active
+    case archived
+    case missing
+}
+
 struct UsageTotals: Codable, Equatable {
     var inputTokens: Int64 = 0
     var cachedInputTokens: Int64 = 0
@@ -59,4 +65,14 @@ struct DailyUsage: Identifiable, Equatable {
     var totals: UsageTotals
     var latestRateLimit: RateLimitSnapshot?
     var updatedAt: Int64
+}
+
+struct UsageSessionScan {
+    var sessionKey: String
+    var source: UsageSource
+    var status: UsageSessionStatus
+    var path: String
+    var fileSize: Int64
+    var fileMtime: Int64
+    var usages: [DailyUsage]
 }

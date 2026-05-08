@@ -7,17 +7,35 @@ struct CodexUsageScanner {
     var codexPath: URL
 
     func scan(source: UsageSource, daysBack: Int?) throws -> [DailyUsage] {
+        let sessionScans = try scanSessions(source: source, daysBack: daysBack)
+        var totalsByDay: [String: ScanResult] = [:]
+        for sessionScan in sessionScans {
+            for usage in sessionScan.usages {
+                var result = totalsByDay[usage.day] ?? ScanResult()
+                result.totals.add(usage.totals)
+                if let snapshot = usage.latestRateLimit,
+                   result.latestRateLimit?.timestamp ?? "" < snapshot.timestamp {
+                    result.latestRateLimit = snapshot
+                }
+                totalsByDay[usage.day] = result
+            }
+        }
+        return dailyUsages(from: totalsByDay, targetDays: daysBack.map { Set(daysToScan(daysBack: $0)) })
+    }
+
+    func scanSessions(source: UsageSource, daysBack: Int?) throws -> [UsageSessionScan] {
         let targetDays = daysBack.map { Set(daysToScan(daysBack: $0)) }
         let files = try files(source: source, daysBack: daysBack)
-        let results = try scan(files: files, targetDays: targetDays)
-        let days = targetDays?.sorted() ?? results.keys.sorted()
-        return days.map { day in
-            let result = results[day] ?? ScanResult()
-            return DailyUsage(
-                day: day,
-                totals: result.totals.withEstimatedCost(),
-                latestRateLimit: result.latestRateLimit,
-                updatedAt: Int64(Date().timeIntervalSince1970)
+        let status: UsageSessionStatus = source == .active ? .active : .archived
+        return try files.map { file in
+            UsageSessionScan(
+                sessionKey: sessionKey(for: file),
+                source: source,
+                status: status,
+                path: file.path,
+                fileSize: try fileSize(of: file),
+                fileMtime: Int64(try modificationDate(of: file).timeIntervalSince1970),
+                usages: dailyUsages(from: try scan(file: file, targetDays: targetDays), targetDays: targetDays)
             )
         }
     }
@@ -68,6 +86,29 @@ struct CodexUsageScanner {
         return values.contentModificationDate ?? .distantPast
     }
 
+    private func fileSize(of url: URL) throws -> Int64 {
+        let values = try url.resourceValues(forKeys: [.fileSizeKey])
+        return Int64(values.fileSize ?? 0)
+    }
+
+    private func sessionKey(for url: URL) -> String {
+        url.deletingPathExtension().lastPathComponent
+    }
+
+    private func dailyUsages(from results: [String: ScanResult], targetDays: Set<String>?) -> [DailyUsage] {
+        let updatedAt = Int64(Date().timeIntervalSince1970)
+        let days = targetDays?.sorted() ?? results.keys.sorted()
+        return days.map { day in
+            let result = results[day] ?? ScanResult()
+            return DailyUsage(
+                day: day,
+                totals: result.totals.withEstimatedCost(),
+                latestRateLimit: result.latestRateLimit,
+                updatedAt: updatedAt
+            )
+        }
+    }
+
     private func scan(files: [URL], targetDays: Set<String>?) throws -> [String: ScanResult] {
         var results: [String: ScanResult] = [:]
         let timestampFormatter = ISO8601DateFormatter()
@@ -83,6 +124,22 @@ struct CodexUsageScanner {
                 fallbackTimestampFormatter: fallbackTimestampFormatter
             )
         }
+        return results
+    }
+
+    private func scan(file: URL, targetDays: Set<String>?) throws -> [String: ScanResult] {
+        var results: [String: ScanResult] = [:]
+        let timestampFormatter = ISO8601DateFormatter()
+        timestampFormatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        let fallbackTimestampFormatter = ISO8601DateFormatter()
+        fallbackTimestampFormatter.formatOptions = [.withInternetDateTime]
+        try scan(
+            file: file,
+            targetDays: targetDays,
+            results: &results,
+            timestampFormatter: timestampFormatter,
+            fallbackTimestampFormatter: fallbackTimestampFormatter
+        )
         return results
     }
 

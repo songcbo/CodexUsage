@@ -79,8 +79,9 @@ final class UsageViewModel: ObservableObject {
         isRefreshing = true
         lastRefreshError = nil
         let codexPath = settings.codexPath
+        let scannedDays = daysBack.map { Set(Self.daysToScan(daysBack: $0)) }
         do {
-            try await Self.refreshActiveInBackground(codexPath: codexPath, daysBack: daysBack)
+            try await Self.refreshActiveInBackground(codexPath: codexPath, daysBack: daysBack, scannedDays: scannedDays)
             try reloadFromDatabase(settings: settings)
         } catch {
             lastRefreshError = error.localizedDescription
@@ -92,22 +93,36 @@ final class UsageViewModel: ObservableObject {
         try await Task.detached(priority: .userInitiated) {
             let scanner = CodexUsageScanner(codexPath: URL(fileURLWithPath: codexPath))
             let database = try UsageDatabase()
-            let activeUsages = try scanner.scan(source: .active, daysBack: nil)
-            try database.replace(usages: activeUsages, source: .active)
+            let activeSessions = try scanner.scanSessions(source: .active, daysBack: nil)
+            try database.reconcile(sessions: activeSessions, status: .active, scannedDays: nil)
             if includeArchived {
-                let archivedUsages = try scanner.scan(source: .archived, daysBack: nil)
-                try database.replace(usages: archivedUsages, source: .archived)
+                let archivedSessions = try scanner.scanSessions(source: .archived, daysBack: nil)
+                try database.reconcile(sessions: archivedSessions, status: .archived, scannedDays: nil)
             }
         }.value
     }
 
-    private nonisolated static func refreshActiveInBackground(codexPath: String, daysBack: Int?) async throws {
+    private nonisolated static func refreshActiveInBackground(
+        codexPath: String,
+        daysBack: Int?,
+        scannedDays: Set<String>?
+    ) async throws {
         try await Task.detached(priority: .userInitiated) {
             let scanner = CodexUsageScanner(codexPath: URL(fileURLWithPath: codexPath))
             let database = try UsageDatabase()
-            let usages = try scanner.scan(source: .active, daysBack: daysBack)
-            try database.upsert(usages: usages, source: .active)
+            let sessions = try scanner.scanSessions(source: .active, daysBack: daysBack)
+            try database.reconcile(sessions: sessions, status: .active, scannedDays: scannedDays)
         }.value
+    }
+
+    private static func daysToScan(daysBack: Int) -> [String] {
+        let calendar = Calendar.current
+        let today = calendar.startOfDay(for: Date())
+        return (0..<max(1, daysBack)).compactMap { offset in
+            calendar.date(byAdding: .day, value: -offset, to: today)
+        }
+        .map { dayFormatter.string(from: $0) }
+        .sorted()
     }
 
     private func reloadFromDatabase(settings: AppSettings) throws {
