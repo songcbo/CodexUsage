@@ -5,11 +5,10 @@ import SwiftUI
 
 struct CodexUsageScanner {
     var codexPath: URL
-    var includeArchivedSessions: Bool
 
-    func scan(daysBack: Int?) throws -> [DailyUsage] {
+    func scan(source: UsageSource, daysBack: Int?) throws -> [DailyUsage] {
         let targetDays = daysBack.map { Set(daysToScan(daysBack: $0)) }
-        let files = try files(daysBack: daysBack)
+        let files = try files(source: source, daysBack: daysBack)
         let results = try scan(files: files, targetDays: targetDays)
         let days = targetDays?.sorted() ?? results.keys.sorted()
         return days.map { day in
@@ -33,27 +32,23 @@ struct CodexUsageScanner {
         .sorted()
     }
 
-    private func files(daysBack: Int?) throws -> [URL] {
-        var result = try jsonlFilesRecursively(in: codexPath.appendingPathComponent("sessions", isDirectory: true))
+    private func files(source: UsageSource, daysBack: Int?) throws -> [URL] {
+        let directory: URL
+        switch source {
+        case .active:
+            directory = codexPath.appendingPathComponent("sessions", isDirectory: true)
+        case .archived:
+            directory = codexPath.appendingPathComponent("archived_sessions", isDirectory: true)
+        }
+
+        var result = try jsonlFilesRecursively(in: directory)
         if let daysBack {
             let calendar = Calendar.current
             let today = calendar.startOfDay(for: Date())
             let earliest = calendar.date(byAdding: .day, value: -max(1, daysBack) + 1, to: today) ?? today
             result = try result.filter { try modificationDate(of: $0) >= earliest }
-        } else if includeArchivedSessions {
-            result.append(contentsOf: try jsonlFiles(in: codexPath.appendingPathComponent("archived_sessions", isDirectory: true)))
         }
         return result
-    }
-
-    private func jsonlFiles(in directory: URL) throws -> [URL] {
-        guard FileManager.default.fileExists(atPath: directory.path) else { return [] }
-        let urls = try FileManager.default.contentsOfDirectory(
-            at: directory,
-            includingPropertiesForKeys: nil,
-            options: [.skipsHiddenFiles]
-        )
-        return urls.filter { $0.pathExtension == "jsonl" }
     }
 
     private func jsonlFilesRecursively(in directory: URL) throws -> [URL] {

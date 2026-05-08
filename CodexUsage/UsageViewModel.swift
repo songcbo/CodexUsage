@@ -36,7 +36,7 @@ final class UsageViewModel: ObservableObject {
     }
 
     func refreshToday(settings: AppSettings) async {
-        await refresh(daysBack: 1, settings: settings)
+        await refreshActive(daysBack: 1, settings: settings)
     }
 
     func refreshOnMenuOpen(settings: AppSettings) async {
@@ -45,15 +45,32 @@ final class UsageViewModel: ObservableObject {
     }
 
     func refreshRecentDays(settings: AppSettings) async {
-        await refresh(daysBack: 7, settings: settings)
+        await refreshActive(daysBack: 7, settings: settings)
     }
 
     func refreshStartupRange(settings: AppSettings) async {
-        await refresh(daysBack: settings.startupScanDays == 0 ? nil : settings.startupScanDays, settings: settings)
+        await refreshActive(daysBack: settings.startupScanDays == 0 ? nil : settings.startupScanDays, settings: settings)
     }
 
     func rebuildAll(settings: AppSettings) async {
-        await refresh(daysBack: nil, settings: settings)
+        guard !isRefreshing else { return }
+        isRefreshing = true
+        lastRefreshError = nil
+        do {
+            let scanner = CodexUsageScanner(codexPath: URL(fileURLWithPath: settings.codexPath))
+            let activeUsages = try scanner.scan(source: .active, daysBack: nil)
+            let archivedUsages = settings.includeArchivedSessions
+                ? try scanner.scan(source: .archived, daysBack: nil)
+                : []
+            try database.replace(usages: activeUsages, source: .active)
+            if settings.includeArchivedSessions {
+                try database.replace(usages: archivedUsages, source: .archived)
+            }
+            try reloadFromDatabase(settings: settings)
+        } catch {
+            lastRefreshError = error.localizedDescription
+        }
+        isRefreshing = false
     }
 
     func usage(for day: String) -> DailyUsage? {
@@ -64,25 +81,22 @@ final class UsageViewModel: ObservableObject {
         visibleMonth = Date()
     }
 
-    private func refresh(daysBack: Int?, settings: AppSettings) async {
+    private func refreshActive(daysBack: Int?, settings: AppSettings) async {
         isRefreshing = true
         lastRefreshError = nil
         do {
-            let scanner = CodexUsageScanner(
-                codexPath: URL(fileURLWithPath: settings.codexPath),
-                includeArchivedSessions: settings.includeArchivedSessions
-            )
-            let usages = try scanner.scan(daysBack: daysBack)
-            try database.upsert(usages: usages)
-            try reloadFromDatabase()
+            let scanner = CodexUsageScanner(codexPath: URL(fileURLWithPath: settings.codexPath))
+            let usages = try scanner.scan(source: .active, daysBack: daysBack)
+            try database.upsert(usages: usages, source: .active)
+            try reloadFromDatabase(settings: settings)
         } catch {
             lastRefreshError = error.localizedDescription
         }
         isRefreshing = false
     }
 
-    private func reloadFromDatabase() throws {
-        dailyUsages = try database.fetchAllDailyUsage()
+    private func reloadFromDatabase(settings: AppSettings) throws {
+        dailyUsages = try database.fetchAllDailyUsage(includeArchived: settings.includeArchivedSessions)
         latestRateLimit = dailyUsages
             .compactMap(\.latestRateLimit)
             .max { $0.timestamp < $1.timestamp }

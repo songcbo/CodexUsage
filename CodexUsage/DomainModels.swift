@@ -12,6 +12,11 @@ enum UsageRange: String, CaseIterable, Identifiable {
     var id: String { rawValue }
 }
 
+enum UsageSource: String {
+    case active
+    case archived
+}
+
 struct UsageTotals: Codable, Equatable {
     var inputTokens: Int64 = 0
     var cachedInputTokens: Int64 = 0
