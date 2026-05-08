@@ -18,3 +18,92 @@
 ```
 
 - 使用 `/private/tmp/CodexUsageDerivedData` 避免沙盒环境写 `~/Library/Developer/Xcode/DerivedData` 或日志目录时被权限拦住。
+
+## 发包流程
+
+1. 确认当前分支
+   - 发包前必须先确认当前分支和目标分支。
+   - 正式发包必须基于 `main`，不要在功能分支或临时分支上直接发 Release。
+   - 检查命令：
+
+```sh
+git status --short --branch
+git log --oneline --decorate -5
+```
+
+2. 合并到 main
+   - 如果改动在非 `main` 分支，先提交当前改动。
+   - 切换到 `main` 后合并该分支。
+   - 合并后推送 `origin/main`。
+   - 验证 `main` 和 `origin/main` 指向同一个最新提交。
+
+3. 更新版本号
+   - 修改 Xcode 工程里的 `MARKETING_VERSION` 和 `CURRENT_PROJECT_VERSION`。
+   - 版本号与发布包、GitHub Release tag 保持一致。
+   - 常规发包优先递增 `0.x.0` 小版本，不使用过细的 `0.x.y` 补丁版本，除非用户特别指定。
+   - 示例：
+
+```text
+MARKETING_VERSION = 0.4.0
+CURRENT_PROJECT_VERSION = 4
+```
+
+4. 构建 Release
+   - 使用完整 Xcode 路径构建：
+
+```sh
+/Applications/Xcode.app/Contents/Developer/usr/bin/xcodebuild -project CodexUsage.xcodeproj -scheme CodexUsage -configuration Release -derivedDataPath /private/tmp/CodexUsageReleaseDerivedData build
+```
+
+   - 构建必须看到 `BUILD SUCCEEDED`。
+
+5. 生成 DMG
+   - 从 Release 构建产物复制 `CodexUsage.app` 到临时打包目录。
+   - 添加 `/Applications` 快捷方式。
+   - 使用 `hdiutil` 生成：
+
+```text
+dist/CodexUsage-vX.Y.Z.dmg
+```
+
+   - 生成后必须运行：
+
+```sh
+hdiutil verify dist/CodexUsage-vX.Y.Z.dmg
+codesign --verify --deep --strict --verbose=2 /private/tmp/CodexUsageReleaseDerivedData/Build/Products/Release/CodexUsage.app
+```
+
+6. 提交发布产物
+   - 提交版本号变更、代码变更和新的 `dist/CodexUsage-vX.Y.Z.dmg`。
+   - commit message 使用中文，格式遵守：
+
+```text
+type(scope): subject
+```
+
+   - 推送 `main`。
+
+7. 创建 GitHub Release
+   - 先检查现有 Releases：
+
+```sh
+gh release list --repo songcbo/CodexUsage --limit 10
+```
+
+   - 创建正式 Release：
+
+```sh
+gh release create vX.Y.Z dist/CodexUsage-vX.Y.Z.dmg --repo songcbo/CodexUsage --target main --title "CodexUsage vX.Y.Z" --notes "..." --latest
+```
+
+   - 验证：
+
+```sh
+gh release view vX.Y.Z --repo songcbo/CodexUsage
+gh release list --repo songcbo/CodexUsage --limit 5
+```
+
+8. 最终确认
+   - GitHub Releases 中 `vX.Y.Z` 必须是 Latest。
+   - Release 附件必须包含对应 DMG。
+   - `main` 必须已经推送到 `origin/main`。
