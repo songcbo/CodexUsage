@@ -73,11 +73,16 @@ final class UsageDatabase {
             sqlite3_bind_int64(statement, 7, usage.totals.totalTokens)
             sqlite3_bind_int64(statement, 8, usage.totals.runs)
             sqlite3_bind_double(statement, 9, usage.totals.estimatedCostUSD)
-            if let snapshot = usage.latestRateLimit,
-               let data = try? encoder.encode(snapshot),
+            let rateLimits = storedRateLimits(for: usage)
+            if !rateLimits.isEmpty,
+               let data = try? encoder.encode(rateLimits),
                let json = String(data: data, encoding: .utf8) {
                 sqlite3_bind_text(statement, 10, json, -1, sqliteTransientDestructor())
-                sqlite3_bind_text(statement, 11, snapshot.timestamp, -1, sqliteTransientDestructor())
+                if let timestamp = latestSnapshot(in: rateLimits)?.timestamp {
+                    sqlite3_bind_text(statement, 11, timestamp, -1, sqliteTransientDestructor())
+                } else {
+                    sqlite3_bind_null(statement, 11)
+                }
             } else {
                 sqlite3_bind_null(statement, 10)
                 sqlite3_bind_null(statement, 11)
@@ -150,24 +155,24 @@ final class UsageDatabase {
                 runs: sqlite3_column_int64(statement, 6),
                 estimatedCostUSD: sqlite3_column_double(statement, 7)
             )
-            let snapshot: RateLimitSnapshot?
+            let rateLimits: [RateLimitSnapshot]
             if let raw = sqlite3_column_text(statement, 8) {
                 let json = String(cString: raw)
-                snapshot = try? decoder.decode(RateLimitSnapshot.self, from: Data(json.utf8))
+                rateLimits = decodeRateLimits(from: json)
             } else {
-                snapshot = nil
+                rateLimits = []
             }
             let updatedAt = sqlite3_column_int64(statement, 9)
             var usage = usagesByDay[day] ?? DailyUsage(
                 day: day,
                 totals: UsageTotals(),
                 latestRateLimit: nil,
+                rateLimits: [],
                 updatedAt: updatedAt
             )
             usage.totals.add(totals)
-            if let snapshot, usage.latestRateLimit?.timestamp ?? "" < snapshot.timestamp {
-                usage.latestRateLimit = snapshot
-            }
+            usage.rateLimits = mergeRateLimits(usage.rateLimits, with: rateLimits)
+            usage.latestRateLimit = latestSnapshot(in: usage.rateLimits)
             usage.updatedAt = max(usage.updatedAt, updatedAt)
             usagesByDay[day] = usage
         }
@@ -305,6 +310,7 @@ final class UsageDatabase {
             FOREIGN KEY(session_key) REFERENCES usage_sessions(session_key) ON DELETE CASCADE
         );
         """)
+        try markLegacyRateLimitSnapshotsForRescan()
 
         guard try !hasRows(in: "usage_sessions") else {
             return
@@ -351,24 +357,24 @@ final class UsageDatabase {
             runs: sqlite3_column_int64(statement, 6),
             estimatedCostUSD: sqlite3_column_double(statement, 7)
         )
-        let snapshot: RateLimitSnapshot?
+        let rateLimits: [RateLimitSnapshot]
         if let raw = sqlite3_column_text(statement, 8) {
             let json = String(cString: raw)
-            snapshot = try? decoder.decode(RateLimitSnapshot.self, from: Data(json.utf8))
+            rateLimits = decodeRateLimits(from: json)
         } else {
-            snapshot = nil
+            rateLimits = []
         }
         let updatedAt = sqlite3_column_int64(statement, 9)
         var usage = usagesByDay[day] ?? DailyUsage(
             day: day,
             totals: UsageTotals(),
             latestRateLimit: nil,
+            rateLimits: [],
             updatedAt: updatedAt
         )
         usage.totals.add(totals)
-        if let snapshot, usage.latestRateLimit?.timestamp ?? "" < snapshot.timestamp {
-            usage.latestRateLimit = snapshot
-        }
+        usage.rateLimits = mergeRateLimits(usage.rateLimits, with: rateLimits)
+        usage.latestRateLimit = latestSnapshot(in: usage.rateLimits)
         usage.updatedAt = max(usage.updatedAt, updatedAt)
         usagesByDay[day] = usage
     }
@@ -415,13 +421,13 @@ final class UsageDatabase {
         } else {
             try deleteSessionDays(sessionKey: sessionKey)
         }
-        for usage in usages where usage.totals.totalTokens > 0 || usage.totals.runs > 0 {
+        for usage in usages where hasStoredData(usage) {
             try insertSessionDay(sessionKey: sessionKey, usage: usage)
         }
     }
 
     private func mergeSessionDays(sessionKey: String, usages: [DailyUsage]) throws {
-        for usage in usages where usage.totals.totalTokens > 0 || usage.totals.runs > 0 {
+        for usage in usages where hasStoredData(usage) {
             try mergeSessionDay(sessionKey: sessionKey, usage: usage)
         }
     }
@@ -431,13 +437,12 @@ final class UsageDatabase {
             day: usage.day,
             totals: UsageTotals(),
             latestRateLimit: nil,
+            rateLimits: [],
             updatedAt: usage.updatedAt
         )
         merged.totals.add(usage.totals)
-        if let snapshot = usage.latestRateLimit,
-           merged.latestRateLimit?.timestamp ?? "" < snapshot.timestamp {
-            merged.latestRateLimit = snapshot
-        }
+        merged.rateLimits = mergeRateLimits(merged.rateLimits, with: storedRateLimits(for: usage))
+        merged.latestRateLimit = latestSnapshot(in: merged.rateLimits)
         merged.updatedAt = max(merged.updatedAt, usage.updatedAt)
         try insertSessionDay(sessionKey: sessionKey, usage: merged)
     }
@@ -469,17 +474,18 @@ final class UsageDatabase {
             runs: sqlite3_column_int64(statement, 6),
             estimatedCostUSD: sqlite3_column_double(statement, 7)
         )
-        let snapshot: RateLimitSnapshot?
+        let rateLimits: [RateLimitSnapshot]
         if let raw = sqlite3_column_text(statement, 8) {
             let json = String(cString: raw)
-            snapshot = try? decoder.decode(RateLimitSnapshot.self, from: Data(json.utf8))
+            rateLimits = decodeRateLimits(from: json)
         } else {
-            snapshot = nil
+            rateLimits = []
         }
         return DailyUsage(
             day: String(cString: sqlite3_column_text(statement, 0)),
             totals: totals,
-            latestRateLimit: snapshot,
+            latestRateLimit: latestSnapshot(in: rateLimits),
+            rateLimits: rateLimits,
             updatedAt: sqlite3_column_int64(statement, 9)
         )
     }
@@ -549,11 +555,16 @@ final class UsageDatabase {
         sqlite3_bind_int64(statement, 7, usage.totals.totalTokens)
         sqlite3_bind_int64(statement, 8, usage.totals.runs)
         sqlite3_bind_double(statement, 9, usage.totals.estimatedCostUSD)
-        if let snapshot = usage.latestRateLimit,
-           let data = try? encoder.encode(snapshot),
+        let rateLimits = storedRateLimits(for: usage)
+        if !rateLimits.isEmpty,
+           let data = try? encoder.encode(rateLimits),
            let json = String(data: data, encoding: .utf8) {
             sqlite3_bind_text(statement, 10, json, -1, sqliteTransientDestructor())
-            sqlite3_bind_text(statement, 11, snapshot.timestamp, -1, sqliteTransientDestructor())
+            if let timestamp = latestSnapshot(in: rateLimits)?.timestamp {
+                sqlite3_bind_text(statement, 11, timestamp, -1, sqliteTransientDestructor())
+            } else {
+                sqlite3_bind_null(statement, 11)
+            }
         } else {
             sqlite3_bind_null(statement, 10)
             sqlite3_bind_null(statement, 11)
@@ -820,6 +831,63 @@ final class UsageDatabase {
             }
         }
         return false
+    }
+
+    private func hasStoredData(_ usage: DailyUsage) -> Bool {
+        usage.totals.totalTokens > 0 || usage.totals.runs > 0 || !storedRateLimits(for: usage).isEmpty
+    }
+
+    private func storedRateLimits(for usage: DailyUsage) -> [RateLimitSnapshot] {
+        if !usage.rateLimits.isEmpty {
+            return usage.rateLimits
+        }
+        if let snapshot = usage.latestRateLimit {
+            return [snapshot]
+        }
+        return []
+    }
+
+    private func decodeRateLimits(from json: String) -> [RateLimitSnapshot] {
+        let data = Data(json.utf8)
+        if let snapshots = try? decoder.decode([RateLimitSnapshot].self, from: data) {
+            return snapshots
+        }
+        if let snapshot = try? decoder.decode(RateLimitSnapshot.self, from: data) {
+            return [snapshot]
+        }
+        return []
+    }
+
+    private func mergeRateLimits(
+        _ existing: [RateLimitSnapshot],
+        with incoming: [RateLimitSnapshot]
+    ) -> [RateLimitSnapshot] {
+        var snapshotsByKey = Dictionary(uniqueKeysWithValues: existing.map { ($0.quotaKey, $0) })
+        for snapshot in incoming where snapshotsByKey[snapshot.quotaKey]?.timestamp ?? "" < snapshot.timestamp {
+            snapshotsByKey[snapshot.quotaKey] = snapshot
+        }
+        return snapshotsByKey.values.sorted { lhs, rhs in
+            if lhs.quotaKey == "codex" { return true }
+            if rhs.quotaKey == "codex" { return false }
+            return lhs.displayName < rhs.displayName
+        }
+    }
+
+    private func latestSnapshot(in snapshots: [RateLimitSnapshot]) -> RateLimitSnapshot? {
+        snapshots.max { $0.timestamp < $1.timestamp }
+    }
+
+    private func markLegacyRateLimitSnapshotsForRescan() throws {
+        try execute("""
+        UPDATE usage_sessions
+        SET last_scanned_offset = 0
+        WHERE session_key IN (
+            SELECT session_key
+            FROM usage_session_days
+            WHERE latest_rate_limits_json IS NOT NULL
+              AND trim(latest_rate_limits_json) NOT LIKE '[%'
+        );
+        """)
     }
 
     private func execute(_ sql: String) throws {

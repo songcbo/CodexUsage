@@ -62,6 +62,8 @@ struct UsageTotals: Codable, Equatable {
 }
 
 struct RateLimitSnapshot: Codable, Equatable {
+    var limitId: String?
+    var limitName: String?
     var timestamp: String
     var planType: String
     var primaryUsedPercent: Double
@@ -70,6 +72,26 @@ struct RateLimitSnapshot: Codable, Equatable {
     var secondaryUsedPercent: Double
     var secondaryWindowMinutes: Int
     var secondaryResetsAt: Int64
+
+    var quotaKey: String {
+        if let limitId, !limitId.isEmpty {
+            return limitId
+        }
+        if let limitName, !limitName.isEmpty {
+            return limitName
+        }
+        return "default"
+    }
+
+    var displayName: String {
+        if let limitName, !limitName.isEmpty {
+            return limitName
+        }
+        if quotaKey == "codex" || quotaKey == "default" {
+            return "Codex"
+        }
+        return quotaKey
+    }
 }
 
 struct DailyUsage: Identifiable, Equatable {
@@ -77,6 +99,7 @@ struct DailyUsage: Identifiable, Equatable {
     var day: String
     var totals: UsageTotals
     var latestRateLimit: RateLimitSnapshot?
+    var rateLimits: [RateLimitSnapshot] = []
     var updatedAt: Int64
 }
 

@@ -28,6 +28,16 @@ struct QuotaSnapshotCard: View {
                     }
                 }
 
+                if model.quotaSnapshots.count > 1 {
+                    Picker("", selection: $model.selectedQuotaKey) {
+                        ForEach(model.quotaSnapshots, id: \.quotaKey) { snapshot in
+                            Text(snapshot.displayName).tag(snapshot.quotaKey as String?)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                    .controlSize(.small)
+                }
+
                 if let snapshot = model.latestRateLimit {
                     QuotaRow(
                         title: settings.localized("quota.primary"),

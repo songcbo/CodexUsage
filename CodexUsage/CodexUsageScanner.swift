@@ -13,9 +13,11 @@ struct CodexUsageScanner {
             for usage in sessionScan.usages {
                 var result = totalsByDay[usage.day] ?? ScanResult()
                 result.totals.add(usage.totals)
-                if let snapshot = usage.latestRateLimit,
-                   result.latestRateLimit?.timestamp ?? "" < snapshot.timestamp {
-                    result.latestRateLimit = snapshot
+                for snapshot in usage.rateLimits {
+                    result.merge(snapshot)
+                }
+                if usage.rateLimits.isEmpty, let snapshot = usage.latestRateLimit {
+                    result.merge(snapshot)
                 }
                 totalsByDay[usage.day] = result
             }
@@ -132,6 +134,7 @@ struct CodexUsageScanner {
                 day: day,
                 totals: result.totals.withEstimatedCost(),
                 latestRateLimit: result.latestRateLimit,
+                rateLimits: result.rateLimits,
                 updatedAt: updatedAt
             )
         }
@@ -148,9 +151,8 @@ struct CodexUsageScanner {
             for (day, fileResult) in scan.results {
                 var result = results[day] ?? ScanResult()
                 result.totals.add(fileResult.totals)
-                if let snapshot = fileResult.latestRateLimit,
-                   result.latestRateLimit?.timestamp ?? "" < snapshot.timestamp {
-                    result.latestRateLimit = snapshot
+                for snapshot in fileResult.rateLimits {
+                    result.merge(snapshot)
                 }
                 results[day] = result
             }
@@ -286,9 +288,8 @@ struct CodexUsageScanner {
             result.totals.runs += 1
         }
         if let rateLimits = payload["rate_limits"] as? [String: Any],
-           let snapshot = snapshot(from: rateLimits, timestamp: timestamp),
-           result.latestRateLimit?.timestamp ?? "" < snapshot.timestamp {
-            result.latestRateLimit = snapshot
+           let snapshot = snapshot(from: rateLimits, timestamp: timestamp) {
+            result.merge(snapshot)
         }
         results[day] = result
     }
@@ -303,6 +304,8 @@ struct CodexUsageScanner {
             return nil
         }
         return RateLimitSnapshot(
+            limitId: json["limit_id"] as? String,
+            limitName: json["limit_name"] as? String,
             timestamp: timestamp,
             planType: json["plan_type"] as? String ?? "",
             primaryUsedPercent: double(primary["used_percent"]),
@@ -355,7 +358,26 @@ struct CodexUsageScanner {
 
 private struct ScanResult {
     var totals = UsageTotals()
-    var latestRateLimit: RateLimitSnapshot?
+    var rateLimitsByKey: [String: RateLimitSnapshot] = [:]
+
+    var rateLimits: [RateLimitSnapshot] {
+        rateLimitsByKey.values.sorted { lhs, rhs in
+            if lhs.quotaKey == "codex" { return true }
+            if rhs.quotaKey == "codex" { return false }
+            return lhs.displayName < rhs.displayName
+        }
+    }
+
+    var latestRateLimit: RateLimitSnapshot? {
+        rateLimits.max { $0.timestamp < $1.timestamp }
+    }
+
+    mutating func merge(_ snapshot: RateLimitSnapshot) {
+        let key = snapshot.quotaKey
+        if rateLimitsByKey[key]?.timestamp ?? "" < snapshot.timestamp {
+            rateLimitsByKey[key] = snapshot
+        }
+    }
 }
 
 private struct FileScan {

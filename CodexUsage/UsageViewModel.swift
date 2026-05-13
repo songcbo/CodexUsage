@@ -8,10 +8,14 @@ final class UsageViewModel: ObservableObject {
     @Published private(set) var dailyUsages: [DailyUsage] = []
     @Published private(set) var selectedRangeTotals = UsageTotals()
     @Published private(set) var latestRateLimit: RateLimitSnapshot?
+    @Published private(set) var quotaSnapshots: [RateLimitSnapshot] = []
     @Published private(set) var isRefreshing = false
     @Published private(set) var lastRefreshError: String?
     @Published var selectedRange: UsageRange = .today {
         didSet { recalculateSelectedRange() }
+    }
+    @Published var selectedQuotaKey: String? {
+        didSet { updateSelectedRateLimit() }
     }
     @Published var visibleMonth = Date()
 
@@ -128,10 +132,50 @@ final class UsageViewModel: ObservableObject {
 
     private func reloadFromDatabase(settings: AppSettings) throws {
         dailyUsages = try database.fetchAllDailyUsage(includeArchived: settings.includeArchivedSessions)
-        latestRateLimit = dailyUsages
-            .compactMap(\.latestRateLimit)
-            .max { $0.timestamp < $1.timestamp }
+        quotaSnapshots = latestQuotaSnapshots(from: dailyUsages)
+        if selectedQuotaKey == nil || !quotaSnapshots.contains(where: { $0.quotaKey == selectedQuotaKey ?? "" }) {
+            selectedQuotaKey = preferredQuotaKey(from: quotaSnapshots)
+        }
+        updateSelectedRateLimit()
         recalculateSelectedRange()
+    }
+
+    private func updateSelectedRateLimit() {
+        guard !quotaSnapshots.isEmpty else {
+            latestRateLimit = nil
+            return
+        }
+        if let selectedQuotaKey,
+           let snapshot = quotaSnapshots.first(where: { $0.quotaKey == selectedQuotaKey }) {
+            latestRateLimit = snapshot
+            return
+        }
+        latestRateLimit = quotaSnapshots.first
+    }
+
+    private func latestQuotaSnapshots(from usages: [DailyUsage]) -> [RateLimitSnapshot] {
+        var snapshotsByKey: [String: RateLimitSnapshot] = [:]
+        for usage in usages {
+            let snapshots = usage.rateLimits.isEmpty ? usage.latestRateLimit.map { [$0] } ?? [] : usage.rateLimits
+            for snapshot in snapshots where snapshotsByKey[snapshot.quotaKey]?.timestamp ?? "" < snapshot.timestamp {
+                snapshotsByKey[snapshot.quotaKey] = snapshot
+            }
+        }
+        if snapshotsByKey["codex"] != nil {
+            snapshotsByKey["default"] = nil
+        }
+        return snapshotsByKey.values.sorted { lhs, rhs in
+            if lhs.quotaKey == "codex" { return true }
+            if rhs.quotaKey == "codex" { return false }
+            return lhs.displayName < rhs.displayName
+        }
+    }
+
+    private func preferredQuotaKey(from snapshots: [RateLimitSnapshot]) -> String? {
+        if snapshots.contains(where: { $0.quotaKey == "codex" }) {
+            return "codex"
+        }
+        return snapshots.max { $0.timestamp < $1.timestamp }?.quotaKey
     }
 
     private func recalculateSelectedRange() {
