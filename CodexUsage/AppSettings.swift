@@ -65,6 +65,8 @@ final class AppSettings: ObservableObject {
     private let defaults = UserDefaults.standard
 
     init() {
+        Self.migrateLegacyDefaultsIfNeeded(to: defaults)
+
         codexPath = defaults.string(forKey: Keys.codexPath) ?? "\(NSHomeDirectory())/.codex"
         includeArchivedSessions = defaults.object(forKey: Keys.includeArchivedSessions) as? Bool ?? true
         language = defaults.string(forKey: Keys.language) ?? "en"
@@ -87,6 +89,20 @@ final class AppSettings: ObservableObject {
         min(max(value, range.lowerBound), range.upperBound)
     }
 
+    private static func migrateLegacyDefaultsIfNeeded(to defaults: UserDefaults) {
+        guard Bundle.main.bundleIdentifier == "com.songcbo.CodexUsage.App",
+              defaults.object(forKey: Keys.legacyDefaultsMigrated) == nil,
+              let legacyDefaults = UserDefaults(suiteName: "com.songcbo.CodexUsage")
+        else { return }
+
+        for key in Keys.migratedKeys where defaults.object(forKey: key) == nil {
+            if let value = legacyDefaults.object(forKey: key) {
+                defaults.set(value, forKey: key)
+            }
+        }
+        defaults.set(true, forKey: Keys.legacyDefaultsMigrated)
+    }
+
     private enum Keys {
         static let codexPath = "codexPath"
         static let includeArchivedSessions = "includeArchivedSessions"
@@ -100,5 +116,21 @@ final class AppSettings: ObservableObject {
         static let breakWorkMinutes = "breakWorkMinutes"
         static let breakDurationMinutes = "breakDurationMinutes"
         static let breakSnoozeMinutes = "breakSnoozeMinutes"
+        static let legacyDefaultsMigrated = "legacyDefaultsMigratedFromComSongcboCodexUsage"
+
+        static let migratedKeys = [
+            codexPath,
+            includeArchivedSessions,
+            language,
+            startupScanDays,
+            showEstimatedCost,
+            showReasoningTokens,
+            defaultRange,
+            breakReminderEnabled,
+            breakReminderMode,
+            breakWorkMinutes,
+            breakDurationMinutes,
+            breakSnoozeMinutes
+        ]
     }
 }
