@@ -42,15 +42,21 @@ final class CodexUsageAppDelegate: NSObject, NSApplicationDelegate {
     private let settings = AppSettings()
     private let model = UsageViewModel()
     private var statusBarController: StatusBarController?
+    private var breakReminderController: BreakReminderController?
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
         ProcessInfo.processInfo.disableAutomaticTermination("CodexUsage status item is active")
         statusBarController = StatusBarController(settings: settings, model: model)
+        breakReminderController = BreakReminderController(settings: settings)
 
         Task {
             await model.start(settings: settings)
         }
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        breakReminderController?.stop()
     }
 }
 

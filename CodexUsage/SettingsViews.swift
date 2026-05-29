@@ -52,6 +52,49 @@ struct SettingsView: View {
                         .padding(.vertical, 10)
                 }
 
+                SettingsSection(title: settings.localized("settings.breakReminder"), systemImage: "figure.mind.and.body") {
+                    SettingsToggleRow(
+                        title: settings.localized("settings.breakReminder.enabled"),
+                        detail: settings.localized("settings.breakReminder.enabled.detail"),
+                        isOn: $settings.breakReminderEnabled
+                    )
+                    VStack(spacing: 0) {
+                        SettingsPickerRow(title: settings.localized("settings.breakReminder.mode")) {
+                            Picker("", selection: $settings.breakReminderMode) {
+                                Text(settings.localized("settings.breakReminder.mode.reminder")).tag(BreakReminderMode.reminder)
+                                Text(settings.localized("settings.breakReminder.mode.force")).tag(BreakReminderMode.force)
+                            }
+                            .pickerStyle(.segmented)
+                            .frame(width: 180)
+                        }
+                        SettingsMinuteInputRow(
+                            title: settings.localized("settings.breakReminder.work"),
+                            value: $settings.breakWorkMinutes,
+                            range: 1...240,
+                            suffix: settings.localized("settings.minutes")
+                        )
+                        SettingsMinuteInputRow(
+                            title: settings.localized("settings.breakReminder.duration"),
+                            value: $settings.breakDurationMinutes,
+                            range: 1...120,
+                            suffix: settings.localized("settings.minutes")
+                        )
+                        SettingsMinuteInputRow(
+                            title: settings.localized("settings.breakReminder.snooze"),
+                            value: $settings.breakSnoozeMinutes,
+                            range: 1...120,
+                            suffix: settings.localized("settings.minutes")
+                        )
+                        SettingsValueRow(
+                            title: settings.localized("settings.breakReminder.pet"),
+                            detail: settings.localized("settings.breakReminder.pet.detail"),
+                            value: "lovely"
+                        )
+                    }
+                    .disabled(!settings.breakReminderEnabled)
+                    .opacity(settings.breakReminderEnabled ? 1 : 0.55)
+                }
+
                 SettingsSection(title: settings.localized("settings.display"), systemImage: "rectangle.3.group") {
                     SettingsPickerRow(title: settings.localized("settings.language")) {
                         Picker("", selection: $settings.language) {
@@ -155,6 +198,53 @@ struct SettingsPickerRow<Control: View>: View {
     var body: some View {
         SettingsRow(title: title, detail: nil) {
             control
+        }
+    }
+}
+
+struct SettingsMinuteInputRow: View {
+    var title: String
+    @Binding var value: Int
+    var range: ClosedRange<Int>
+    var suffix: String
+
+    var body: some View {
+        SettingsRow(title: title, detail: nil) {
+            HStack(spacing: 8) {
+                TextField("", value: clampedValue, format: .number)
+                    .textFieldStyle(.roundedBorder)
+                    .monospacedDigit()
+                    .multilineTextAlignment(.trailing)
+                    .frame(width: 72)
+                Text(suffix)
+                    .foregroundStyle(.secondary)
+            }
+            .frame(width: 132, alignment: .trailing)
+        }
+    }
+
+    private var clampedValue: Binding<Int> {
+        Binding(
+            get: { value },
+            set: { value = Self.clamped($0, in: range) }
+        )
+    }
+
+    private static func clamped(_ value: Int, in range: ClosedRange<Int>) -> Int {
+        min(max(value, range.lowerBound), range.upperBound)
+    }
+}
+
+struct SettingsValueRow: View {
+    var title: String
+    var detail: String?
+    var value: String
+
+    var body: some View {
+        SettingsRow(title: title, detail: detail) {
+            Text(value)
+                .font(.body.weight(.medium))
+                .foregroundStyle(.secondary)
         }
     }
 }

@@ -23,6 +23,9 @@
 		0A00000E2C00000000000000 /* MenuBarIcon.svg in Resources */ = {isa = PBXBuildFile; fileRef = 0A00010E2C00000000000000 /* MenuBarIcon.svg */; };
 		0A00000F2C00000000000000 /* libsqlite3.tbd in Frameworks */ = {isa = PBXBuildFile; fileRef = 0A00010F2C00000000000000 /* libsqlite3.tbd */; };
 		0A0000102C00000000000000 /* Assets.xcassets in Resources */ = {isa = PBXBuildFile; fileRef = 0A0001122C00000000000000 /* Assets.xcassets */; };
+		0A0000112C00000000000000 /* BreakReminderController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0A0001132C00000000000000 /* BreakReminderController.swift */; };
+		0A0000122C00000000000000 /* BreakReminderViews.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0A0001142C00000000000000 /* BreakReminderViews.swift */; };
+		0A0000132C00000000000000 /* PetSpritesheet.swift in Sources */ = {isa = PBXBuildFile; fileRef = 0A0001152C00000000000000 /* PetSpritesheet.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXFileReference section */
@@ -44,6 +47,9 @@
 		0A0001102C00000000000000 /* Info.plist */ = {isa = PBXFileReference; lastKnownFileType = text.plist.xml; path = Info.plist; sourceTree = "<group>"; };
 		0A0001112C00000000000000 /* CodexUsage.app */ = {isa = PBXFileReference; explicitFileType = wrapper.application; includeInIndex = 0; path = CodexUsage.app; sourceTree = BUILT_PRODUCTS_DIR; };
 		0A0001122C00000000000000 /* Assets.xcassets */ = {isa = PBXFileReference; lastKnownFileType = folder.assetcatalog; path = Assets.xcassets; sourceTree = "<group>"; };
+		0A0001132C00000000000000 /* BreakReminderController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BreakReminderController.swift; sourceTree = "<group>"; };
+		0A0001142C00000000000000 /* BreakReminderViews.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = BreakReminderViews.swift; sourceTree = "<group>"; };
+		0A0001152C00000000000000 /* PetSpritesheet.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = PetSpritesheet.swift; sourceTree = "<group>"; };
 /* End PBXFileReference section */
 
 /* Begin PBXFrameworksBuildPhase section */
@@ -72,12 +78,15 @@
 			children = (
 				0A0001012C00000000000000 /* AppEntry.swift */,
 				0A0001022C00000000000000 /* AppSettings.swift */,
+				0A0001132C00000000000000 /* BreakReminderController.swift */,
+				0A0001142C00000000000000 /* BreakReminderViews.swift */,
 				0A0001032C00000000000000 /* CalendarViews.swift */,
 				0A0001042C00000000000000 /* CodexUsageScanner.swift */,
 				0A0001052C00000000000000 /* Components.swift */,
 				0A0001062C00000000000000 /* DashboardView.swift */,
 				0A0001072C00000000000000 /* DomainModels.swift */,
 				0A0001082C00000000000000 /* LocalUsageViews.swift */,
+				0A0001152C00000000000000 /* PetSpritesheet.swift */,
 				0A0001092C00000000000000 /* QuotaViews.swift */,
 				0A00010A2C00000000000000 /* SettingsViews.swift */,
 				0A00010B2C00000000000000 /* UsageDatabase.swift */,
@@ -190,10 +199,13 @@
 				0A0000042C00000000000000 /* CodexUsageScanner.swift in Sources */,
 				0A0000052C00000000000000 /* Components.swift in Sources */,
 				0A0000062C00000000000000 /* DashboardView.swift in Sources */,
+				0A0000112C00000000000000 /* BreakReminderController.swift in Sources */,
 				0A0000072C00000000000000 /* DomainModels.swift in Sources */,
 				0A0000082C00000000000000 /* LocalUsageViews.swift in Sources */,
+				0A0000132C00000000000000 /* PetSpritesheet.swift in Sources */,
 				0A0000092C00000000000000 /* QuotaViews.swift in Sources */,
 				0A00000A2C00000000000000 /* SettingsViews.swift in Sources */,
+				0A0000122C00000000000000 /* BreakReminderViews.swift in Sources */,
 				0A00000B2C00000000000000 /* UsageDatabase.swift in Sources */,
 				0A00000C2C00000000000000 /* UsageViewModel.swift in Sources */,
 				0A00000D2C00000000000000 /* Utilities.swift in Sources */,
