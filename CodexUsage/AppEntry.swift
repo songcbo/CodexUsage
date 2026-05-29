@@ -22,7 +22,7 @@ enum MenuBarStatusItem {
 #if DEBUG
     static let autosaveName = "CodexUsageDebugStatusItem"
 #else
-    static let autosaveName = "CodexUsageStatusItem"
+    static let autosaveName = "CodexUsageMenuBarStatusItem"
 #endif
 }
 
