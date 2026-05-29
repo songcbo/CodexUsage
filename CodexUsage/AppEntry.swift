@@ -18,31 +18,97 @@ enum MenuBarIcon {
     }
 }
 
+enum MenuBarStatusItem {
+#if DEBUG
+    static let autosaveName = "CodexUsageDebugStatusItem"
+#else
+    static let autosaveName = "CodexUsageStatusItem"
+#endif
+}
+
 @main
 struct CodexUsageApp: App {
-    @StateObject private var settings = AppSettings()
-    @StateObject private var model = UsageViewModel()
+    @NSApplicationDelegateAdaptor(CodexUsageAppDelegate.self) private var appDelegate
 
     var body: some Scene {
-        MenuBarExtra {
-            DashboardView()
+        Settings {
+            EmptyView()
+        }
+    }
+}
+
+@MainActor
+final class CodexUsageAppDelegate: NSObject, NSApplicationDelegate {
+    private let settings = AppSettings()
+    private let model = UsageViewModel()
+    private var statusBarController: StatusBarController?
+
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        NSApp.setActivationPolicy(.accessory)
+        ProcessInfo.processInfo.disableAutomaticTermination("CodexUsage status item is active")
+        statusBarController = StatusBarController(settings: settings, model: model)
+
+        Task {
+            await model.start(settings: settings)
+        }
+    }
+}
+
+@MainActor
+final class StatusBarController: NSObject {
+    private let settings: AppSettings
+    private let model: UsageViewModel
+    private let statusItem: NSStatusItem
+    private let popover: NSPopover
+
+    init(settings: AppSettings, model: UsageViewModel) {
+        self.settings = settings
+        self.model = model
+        statusItem = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
+        popover = NSPopover()
+        super.init()
+
+        statusItem.autosaveName = MenuBarStatusItem.autosaveName
+        configureStatusItem()
+        configurePopover()
+    }
+
+    private func configureStatusItem() {
+        statusItem.isVisible = true
+
+        guard let button = statusItem.button else { return }
+        button.image = MenuBarIcon.image
+        button.imagePosition = .imageOnly
+        button.imageScaling = .scaleProportionallyDown
+        button.toolTip = "Codex Usage"
+        button.setAccessibilityLabel("Codex Usage")
+        button.target = self
+        button.action = #selector(togglePopover(_:))
+    }
+
+    private func configurePopover() {
+        popover.behavior = .transient
+        popover.contentSize = NSSize(width: 380, height: 740)
+        popover.contentViewController = NSHostingController(
+            rootView: DashboardView()
                 .environmentObject(settings)
                 .environmentObject(model)
                 .frame(width: 380, height: 740)
-                .task {
-                    await model.start(settings: settings)
-                }
-                .onAppear {
-                    model.resetVisibleMonthToCurrent()
-                    Task {
-                        await model.refreshOnMenuOpen(settings: settings)
-                    }
-                }
-        } label: {
-            Image(nsImage: MenuBarIcon.image)
-                .accessibilityLabel("Codex Usage")
+        )
+    }
+
+    @objc private func togglePopover(_ sender: NSStatusBarButton) {
+        if popover.isShown {
+            popover.performClose(sender)
+            return
         }
-        .menuBarExtraStyle(.window)
+
+        model.resetVisibleMonthToCurrent()
+        Task {
+            await model.refreshOnMenuOpen(settings: settings)
+        }
+        popover.show(relativeTo: sender.bounds, of: sender, preferredEdge: .minY)
+        popover.contentViewController?.view.window?.makeKey()
     }
 }
 
