@@ -114,7 +114,7 @@ final class BreakReminderController {
         case .reminder:
             showReminder()
         case .force:
-            startRest()
+            startRest(guideToDesktop: true)
         }
     }
 
@@ -126,7 +126,7 @@ final class BreakReminderController {
             settings: settings,
             pet: currentPetSpritesheet(),
             onStartRest: { [weak self] in
-                self?.startRest()
+                self?.startRest(guideToDesktop: false)
             },
             onSnooze: { [weak self] in
                 self?.snooze()
@@ -137,7 +137,7 @@ final class BreakReminderController {
         )
     }
 
-    private func startRest() {
+    private func startRest(guideToDesktop: Bool) {
         isReminderVisible = false
         snoozeUntil = nil
         windowPresenter.closeReminder()
@@ -148,6 +148,7 @@ final class BreakReminderController {
             settings: settings,
             endDate: endDate,
             pet: currentPetSpritesheet(),
+            guideToDesktop: guideToDesktop,
             onExit: { [weak self] in
                 self?.finishRest()
             }
@@ -211,6 +212,8 @@ enum SystemInputIdleTime {
 private final class BreakReminderWindowPresenter {
     private var reminderWindow: BreakReminderPanel?
     private var restWindows: [BreakRestWindow] = []
+    private var restPresentationTask: Task<Void, Never>?
+    private var activationPolicyBeforeRest: NSApplication.ActivationPolicy?
 
     func showReminder(
         settings: AppSettings,
@@ -257,9 +260,34 @@ private final class BreakReminderWindowPresenter {
         settings: AppSettings,
         endDate: Date,
         pet: PetSpritesheet,
+        guideToDesktop: Bool,
         onExit: @escaping () -> Void
     ) {
         closeRestWindows()
+
+        guard guideToDesktop else {
+            presentRestWindows(settings: settings, endDate: endDate, pet: pet, onExit: onExit)
+            return
+        }
+
+        restPresentationTask = Task { @MainActor [weak self] in
+            guard let self else { return }
+            self.prepareForGuidedRest()
+            self.activateDesktopSpace()
+
+            try? await Task.sleep(nanoseconds: 350_000_000)
+            guard !Task.isCancelled else { return }
+
+            self.presentRestWindows(settings: settings, endDate: endDate, pet: pet, onExit: onExit)
+        }
+    }
+
+    private func presentRestWindows(
+        settings: AppSettings,
+        endDate: Date,
+        pet: PetSpritesheet,
+        onExit: @escaping () -> Void
+    ) {
         NSApp.activate(ignoringOtherApps: true)
 
         for screen in NSScreen.screens {
@@ -296,11 +324,15 @@ private final class BreakReminderWindowPresenter {
     }
 
     func closeRestWindows() {
+        restPresentationTask?.cancel()
+        restPresentationTask = nil
+
         for window in restWindows {
             window.orderOut(nil)
             window.close()
         }
         restWindows.removeAll()
+        restoreActivationPolicyAfterRestIfNeeded()
     }
 
     func closeAll() {
@@ -315,6 +347,37 @@ private final class BreakReminderWindowPresenter {
             y: screenFrame.midY - window.frame.height / 2
         )
         window.setFrameOrigin(origin)
+    }
+
+    private func prepareForGuidedRest() {
+        if activationPolicyBeforeRest == nil {
+            activationPolicyBeforeRest = NSApp.activationPolicy()
+        }
+        NSApp.setActivationPolicy(.regular)
+    }
+
+    private func activateDesktopSpace() {
+        guard let finder = NSWorkspace.shared.runningApplications.first(where: { $0.bundleIdentifier == "com.apple.finder" }) else {
+            return
+        }
+        finder.activate(options: [.activateAllWindows])
+    }
+
+    private func restoreActivationPolicyAfterRestIfNeeded() {
+        guard let policy = activationPolicyBeforeRest else { return }
+        activationPolicyBeforeRest = nil
+
+        guard policy != .regular, !hasVisibleUserWindow() else { return }
+        NSApp.setActivationPolicy(policy)
+    }
+
+    private func hasVisibleUserWindow() -> Bool {
+        NSApp.windows.contains { window in
+            guard window.isVisible else { return false }
+            if window === reminderWindow { return false }
+            if restWindows.contains(where: { $0 === window }) { return false }
+            return window.canBecomeMain || window.canBecomeKey
+        }
     }
 }
 
