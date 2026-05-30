@@ -273,12 +273,13 @@ private final class BreakReminderWindowPresenter {
         restPresentationTask = Task { @MainActor [weak self] in
             guard let self else { return }
             self.prepareForGuidedRest()
+            self.presentRestWindows(settings: settings, endDate: endDate, pet: pet, onExit: onExit)
             self.activateDesktopSpace()
 
             try? await Task.sleep(nanoseconds: 350_000_000)
             guard !Task.isCancelled else { return }
 
-            self.presentRestWindows(settings: settings, endDate: endDate, pet: pet, onExit: onExit)
+            self.bringRestWindowsToFront()
         }
     }
 
@@ -314,6 +315,14 @@ private final class BreakReminderWindowPresenter {
             restWindows.append(window)
         }
 
+        restWindows.last?.makeKeyAndOrderFront(nil)
+    }
+
+    private func bringRestWindowsToFront() {
+        NSApp.activate(ignoringOtherApps: true)
+        for window in restWindows {
+            window.orderFrontRegardless()
+        }
         restWindows.last?.makeKeyAndOrderFront(nil)
     }
 
